@@ -304,6 +304,10 @@ impl<'a> FontRef<'a> {
             })
     }
 
+    pub fn data(&self) -> FontData<'a> {
+        self.data
+    }
+
     fn with_table_directory(
         data: FontData<'a>,
         table_directory: TableDirectory<'a>,
