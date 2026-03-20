@@ -114,8 +114,11 @@ impl<'a> Cff<'a> {
                 _ => {}
             }
         }
-        if let Some((charset_offset, num_glyphs)) = charset_offset.zip(num_glyphs) {
-            Ok(Some(Charset::new(offset_data, charset_offset, num_glyphs)?))
+        if let Some(num_glyphs) = num_glyphs {
+            // Per the CFF spec, the default charset (when not specified) is
+            // ISOAdobe at offset 0.
+            let offset = charset_offset.unwrap_or(0);
+            Ok(Some(Charset::new(offset_data, offset, num_glyphs)?))
         } else {
             Ok(None)
         }
