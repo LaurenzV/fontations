@@ -669,8 +669,20 @@ impl<'a> Parser<'a> {
                                 self.pos += 1;
                                 // read the internal data
                                 let data = self.read_bytes(int as usize)?;
-                                // and skip the terminator (usually ND, NP or |-)
-                                self.next();
+                                // Skip the terminator if present (usually ND, NP, |-, or
+                                // noaccess). Some fonts omit the terminator and go directly
+                                // to the next charstring entry.
+                                if matches!(
+                                    self.peek(),
+                                    Some(Token::Raw(b"ND"))
+                                        | Some(Token::Raw(b"|-"))
+                                        | Some(Token::Raw(b"NP"))
+                                        | Some(Token::Raw(b"|"))
+                                        | Some(Token::Raw(b"noaccess"))
+                                        | Some(Token::Raw(b"put"))
+                                ) {
+                                    self.next();
+                                }
                                 return Some(Token::Binary(data));
                             }
                             return Some(Token::Int(int));
