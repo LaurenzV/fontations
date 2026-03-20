@@ -454,7 +454,12 @@ impl CffSubfont {
         };
         let data = data.get(range.clone()).ok_or(ReadError::OutOfBounds)?;
         for entry in dict::entries(data, blend) {
-            match entry? {
+            // Skip unknown operators rather than failing — some fonts contain
+            // unexpected operators in the private dict.
+            let Ok(entry) = entry else {
+                continue;
+            };
+            match entry {
                 dict::Entry::SubrsOffset(offset) => {
                     subfont.subrs_offset = range
                         .start
