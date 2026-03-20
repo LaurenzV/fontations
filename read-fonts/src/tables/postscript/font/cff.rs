@@ -344,21 +344,23 @@ impl<'a> CffFontRef<'a> {
         if data.is_empty() {
             return None;
         }
-        let format = data[0] & 0x7F; // Mask off supplement bit
-        match format {
+        let has_supplement = data[0] & 0x80 != 0;
+        let format = data[0] & 0x7F;
+        let (result, supplement_start) = match format {
             0 => {
                 // Format 0: nCodes byte, then nCodes character code values.
-                // Glyph i+1 has character code data[2+i].
                 if data.len() < 2 {
                     return None;
                 }
                 let n_codes = data[1] as usize;
+                let mut found = None;
                 for i in 0..n_codes.min(data.len() - 2) {
                     if data[2 + i] == code {
-                        return Some(GlyphId::new((i as u32) + 1));
+                        found = Some(GlyphId::new((i as u32) + 1));
+                        break;
                     }
                 }
-                None
+                (found, 2 + n_codes)
             }
             1 => {
                 // Format 1: nRanges byte, then ranges of (first: u8, nLeft: u8).
@@ -367,6 +369,7 @@ impl<'a> CffFontRef<'a> {
                 }
                 let n_ranges = data[1] as usize;
                 let mut gid = 1u32;
+                let mut found = None;
                 for i in 0..n_ranges {
                     let base = 2 + i * 2;
                     if base + 1 >= data.len() {
@@ -374,16 +377,44 @@ impl<'a> CffFontRef<'a> {
                     }
                     let first = data[base];
                     let n_left = data[base + 1] as u32;
-                    if code >= first && (code as u32) <= first as u32 + n_left {
-                        let glyph_id = gid + (code as u32) - (first as u32);
-                        return Some(GlyphId::new(glyph_id));
+                    if found.is_none()
+                        && code >= first
+                        && (code as u32) <= first as u32 + n_left
+                    {
+                        found = Some(GlyphId::new(gid + (code as u32) - (first as u32)));
                     }
                     gid += n_left + 1;
                 }
-                None
+                (found, 2 + n_ranges * 2)
             }
-            _ => None,
+            _ => return None,
+        };
+        if result.is_some() {
+            return result;
         }
+        // Check supplemental encoding if present.
+        // Format: nSups (u8), then nSups * (code: u8, sid: u16be) triples.
+        if has_supplement {
+            let charset = self.charset()?;
+            let sup_data = data.get(supplement_start..)?;
+            if sup_data.is_empty() {
+                return None;
+            }
+            let n_sups = sup_data[0] as usize;
+            for i in 0..n_sups {
+                let entry_start = 1 + i * 3;
+                if entry_start + 2 >= sup_data.len() {
+                    break;
+                }
+                let sup_code = sup_data[entry_start];
+                let sup_sid =
+                    u16::from_be_bytes([sup_data[entry_start + 1], sup_data[entry_start + 2]]);
+                if sup_code == code {
+                    return charset.glyph_id(StringId::new(sup_sid)).ok();
+                }
+            }
+        }
+        None
     }
 
     /// Returns the glyph identifier for the given CID.
