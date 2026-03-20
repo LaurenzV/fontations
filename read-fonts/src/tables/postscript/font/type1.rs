@@ -350,19 +350,23 @@ fn find_eexec_data(data: &[u8]) -> Option<usize> {
             continue;
         }
         let mut start = parser.pos;
-        // FreeType has some unfun logic for skipping whitespace
-        // after the eexec token
+        // FreeType heuristic for skipping whitespace after eexec:
+        // Only treat \r as whitespace if it appears before (or without)
+        // a \n. When \n appears first, a subsequent \r is the start of
+        // the encrypted data, not whitespace.
         // <https://gitlab.freedesktop.org/freetype/freetype/-/blob/80a507a6b8e3d2906ad2c8ba69329bd2fb2a85ef/src/type1/t1parse.c#L382>
+        let remaining = &data[start..];
+        let pos_lf = remaining.iter().position(|&b| b == b'\n');
+        let pos_cr = remaining.iter().position(|&b| b == b'\r');
+        let skip_cr = match (pos_lf, pos_cr) {
+            (None, _) => true,               // no \n at all → \r is whitespace
+            (_, None) => false,               // no \r at all → irrelevant
+            (Some(lf), Some(cr)) => cr < lf,  // \r before \n → \r is whitespace
+        };
         while start < data.len() {
             match data[start] {
                 b' ' | b'\t' | b'\n' => {}
-                b'\r' => {
-                    // Only stop at \r if it is not followed by \n
-                    if data.get(start + 1) != Some(&b'\n') {
-                        start += 1;
-                        break;
-                    }
-                }
+                b'\r' if skip_cr => {}
                 _ => break,
             }
             start += 1;
