@@ -6,6 +6,9 @@ use super::super::{
     dict::{self, ScaledFontMatrix},
     BlendState, Charset, Error, FdSelect, Index,
 };
+// Encoding and string types for glyph name/index resolution
+use super::super::encoding::{EXPERT_ENCODING, STANDARD_ENCODING};
+use super::super::string::{Latin1String, StringId, STANDARD_STRINGS};
 use super::HintingParams;
 use crate::{tables::variations::ItemVariationStore, FontRead, ReadError};
 use core::ops::Range;
@@ -231,6 +234,165 @@ impl<'a> CffFontRef<'a> {
             .as_ref()
             .and_then(|store| BlendState::new(store.clone(), coords, vs_index).ok())
     }
+
+    /// Returns the string index for this font.
+    ///
+    /// Only available for SID (non-CID) fonts.
+    pub fn strings(&self) -> Option<&Index<'a>> {
+        match &self.top_dict.kind {
+            CffFontKind::Sid { strings, .. } => Some(strings),
+            _ => None,
+        }
+    }
+
+    /// Returns the glyph name for the given glyph identifier.
+    pub fn glyph_name(&self, gid: GlyphId) -> Option<Latin1String<'a>> {
+        let charset = self.charset()?;
+        let sid = charset.string_id(gid).ok()?;
+        match sid.standard_string() {
+            Ok(name) => Some(name),
+            Err(index) => {
+                let strings = self.strings()?;
+                let data = strings.get(index).ok()?;
+                Some(Latin1String::new(data))
+            }
+        }
+    }
+
+    /// Returns the glyph identifier for the given glyph name.
+    ///
+    /// Prioritizes custom strings over standard strings to match the
+    /// behavior described in PDFBOX-5987.
+    pub fn glyph_index_by_name(&self, name: &str) -> Option<GlyphId> {
+        let charset = self.charset()?;
+        // First check custom strings (prioritize over standard, see PDFBOX-5987)
+        if let Some(strings) = self.strings() {
+            for i in 0..strings.count() {
+                if let Ok(data) = strings.get(i as usize) {
+                    if data == name.as_bytes() {
+                        let sid = StringId::new((STANDARD_STRINGS.len() + i as usize) as u16);
+                        if let Ok(gid) = charset.glyph_id(sid) {
+                            return Some(gid);
+                        }
+                    }
+                }
+            }
+        }
+        // Then check standard strings
+        for (i, &standard_name) in STANDARD_STRINGS.iter().enumerate() {
+            if standard_name == name {
+                let sid = StringId::new(i as u16);
+                if let Ok(gid) = charset.glyph_id(sid) {
+                    return Some(gid);
+                }
+            }
+        }
+        None
+    }
+
+    /// Returns the glyph identifier for the given character code using
+    /// the font's built-in CFF encoding.
+    ///
+    /// Only available for SID (non-CID) fonts.
+    pub fn glyph_index(&self, code: u8) -> Option<GlyphId> {
+        let charset = self.charset()?;
+        let encoding_offset = self.top_dict.encoding_offset.get();
+
+        let result = match encoding_offset {
+            None | Some(0) => {
+                // Standard encoding: code → SID → GlyphId
+                let sid = STANDARD_ENCODING[code as usize] as u16;
+                if sid == 0 && code != 0 {
+                    None
+                } else {
+                    charset.glyph_id(StringId::new(sid)).ok()
+                }
+            }
+            Some(1) => {
+                // Expert encoding: code → SID → GlyphId
+                let sid = EXPERT_ENCODING[code as usize];
+                if sid == 0 && code != 0 {
+                    None
+                } else {
+                    charset.glyph_id(StringId::new(sid)).ok()
+                }
+            }
+            Some(offset) => {
+                // Custom encoding: parse from data
+                self.parse_custom_encoding_lookup(offset, code)
+            }
+        };
+
+        result.or_else(|| {
+            // Fallback to Standard encoding (matching hayro-font behavior)
+            let sid = STANDARD_ENCODING[code as usize] as u16;
+            if sid == 0 && code != 0 {
+                None
+            } else {
+                charset.glyph_id(StringId::new(sid)).ok()
+            }
+        })
+    }
+
+    /// Parse a custom CFF encoding at the given offset and look up a
+    /// character code.
+    fn parse_custom_encoding_lookup(&self, offset: usize, code: u8) -> Option<GlyphId> {
+        let data = self.data.get(offset..)?;
+        if data.is_empty() {
+            return None;
+        }
+        let format = data[0] & 0x7F; // Mask off supplement bit
+        match format {
+            0 => {
+                // Format 0: nCodes byte, then nCodes character code values.
+                // Glyph i+1 has character code data[2+i].
+                if data.len() < 2 {
+                    return None;
+                }
+                let n_codes = data[1] as usize;
+                for i in 0..n_codes.min(data.len() - 2) {
+                    if data[2 + i] == code {
+                        return Some(GlyphId::new((i as u32) + 1));
+                    }
+                }
+                None
+            }
+            1 => {
+                // Format 1: nRanges byte, then ranges of (first: u8, nLeft: u8).
+                if data.len() < 2 {
+                    return None;
+                }
+                let n_ranges = data[1] as usize;
+                let mut gid = 1u32;
+                for i in 0..n_ranges {
+                    let base = 2 + i * 2;
+                    if base + 1 >= data.len() {
+                        return None;
+                    }
+                    let first = data[base];
+                    let n_left = data[base + 1] as u32;
+                    if code >= first && (code as u32) <= first as u32 + n_left {
+                        let glyph_id = gid + (code as u32) - (first as u32);
+                        return Some(GlyphId::new(glyph_id));
+                    }
+                    gid += n_left + 1;
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Returns the glyph identifier for the given CID.
+    ///
+    /// Only available for CID fonts.
+    pub fn glyph_index_by_cid(&self, cid: u16) -> Option<GlyphId> {
+        if !self.is_cid() {
+            return None;
+        }
+        let charset = self.charset()?;
+        charset.glyph_id(StringId::new(cid)).ok()
+    }
 }
 
 /// An SID or CID font.
@@ -239,7 +401,7 @@ enum CffFontKind<'a> {
     /// A CFF font.
     Sid {
         /// Index for resolving glyph names.
-        _strings: Index<'a>,
+        strings: Index<'a>,
         /// Byte range of the private dict from the base of the font data.
         private_dict: Range<u32>,
     },
@@ -399,7 +561,7 @@ impl Default for MaybeOffset {
 struct TopDict<'a> {
     charstrings: Index<'a>,
     charset_offset: MaybeOffset,
-    _encoding_offset: MaybeOffset,
+    encoding_offset: MaybeOffset,
     matrix: Option<ScaledFontMatrix>,
     var_store: Option<ItemVariationStore<'a>>,
     kind: CffFontKind<'a>,
@@ -478,13 +640,13 @@ impl<'a> TopDict<'a> {
                 return Err(Error::MissingFdArray);
             }
             CffFontKind::Sid {
-                _strings: strings,
+                strings,
                 private_dict: private_dict_range.start as u32..private_dict_range.end as u32,
             }
         };
         Ok(Self {
             charset_offset,
-            _encoding_offset: encoding_offset,
+            encoding_offset,
             charstrings,
             matrix,
             kind,

@@ -8,7 +8,7 @@
 /// See "Standard" encoding at <https://adobe-type-tools.github.io/font-tech-notes/pdfs/5176.CFF.pdf#page=37>
 /// for this particular mapping.
 #[rustfmt::skip]
-pub(super) static STANDARD_ENCODING: [u8; 256] = [
+pub(crate) static STANDARD_ENCODING: [u8; 256] = [
       0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
       0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
       1,   2,   3,   4,   5,   6,   7,   8,   9,  10,  11,  12,  13,  14,  15,  16,
@@ -30,7 +30,7 @@ pub(super) static STANDARD_ENCODING: [u8; 256] = [
 /// See "Expert" encoding at <https://adobe-type-tools.github.io/font-tech-notes/pdfs/5176.CFF.pdf#page=40>
 /// for this particular mapping.
 #[rustfmt::skip]
-pub(super) static EXPERT_ENCODING: [u16; 256] = [
+pub(crate) static EXPERT_ENCODING: [u16; 256] = [
       0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0, 
       0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0, 
       1, 229, 230,   0, 231, 232, 233, 234, 235, 236, 237, 238,  13,  14,  15,  99, 

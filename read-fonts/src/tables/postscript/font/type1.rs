@@ -162,6 +162,52 @@ impl Type1Font {
             .ok_or(ReadError::OutOfBounds)?;
         charstring::evaluate(self, None, charstring_data, sink)
     }
+
+    /// Returns the glyph name for the given character code using the font's
+    /// built-in encoding.
+    pub fn glyph_name_for_code(&self, code: u8) -> Option<&str> {
+        match &self.encoding {
+            Encoding::Predefined(enc) => {
+                let name = enc.code_to_glyph_name(code);
+                // Verify the glyph actually exists in the font
+                self.charstrings.index_for_name(name)?;
+                Some(name)
+            }
+            Encoding::Custom(map) => {
+                let gid = *map.get(code as usize)?;
+                self.charstrings.name(gid.to_u32())
+            }
+        }
+    }
+
+    /// Returns the glyph identifier for the given character code using the
+    /// font's built-in encoding.
+    pub fn glyph_id_for_code(&self, code: u8) -> Option<GlyphId> {
+        match &self.encoding {
+            Encoding::Predefined(enc) => {
+                let name = enc.code_to_glyph_name(code);
+                self.charstrings.index_for_name(name).map(GlyphId::new)
+            }
+            Encoding::Custom(map) => {
+                let gid = *map.get(code as usize)?;
+                if gid == GlyphId::NOTDEF && code != 0 {
+                    None
+                } else {
+                    Some(gid)
+                }
+            }
+        }
+    }
+
+    /// Returns the glyph identifier for the given glyph name.
+    pub fn glyph_id_for_name(&self, name: &str) -> Option<GlyphId> {
+        self.charstrings.index_for_name(name).map(GlyphId::new)
+    }
+
+    /// Returns the glyph name for the given glyph identifier.
+    pub fn glyph_name(&self, gid: GlyphId) -> Option<&str> {
+        self.charstrings.name(gid.to_u32())
+    }
 }
 
 impl CharstringContext for Type1Font {
