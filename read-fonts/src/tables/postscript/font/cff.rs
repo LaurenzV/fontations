@@ -107,9 +107,12 @@ impl<'a> CffFontRef<'a> {
     /// For a CID font, this maps between CIDs and glyph identifiers.
     /// Otherwise maps between SIDs and glyph identifiers.
     pub fn charset(&self) -> Option<Charset<'a>> {
+        // Per the CFF spec, the default charset (when not specified) is
+        // ISOAdobe at offset 0.
+        let offset = self.top_dict.charset_offset.get().unwrap_or(0);
         Charset::new(
             self.data.into(),
-            self.top_dict.charset_offset.get()?,
+            offset,
             self.top_dict.charstrings.count(),
         )
         .ok()
