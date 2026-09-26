@@ -162,8 +162,16 @@ impl<'a> BitmapStrike<'a> {
                 // Note that this calculation does not entirely correspond to the description in
                 // the specification, but it's implemented this way in Skia (https://github.com/google/skia/blob/02cd0561f4f756bf4f7b16641d8fc4c61577c765/src/ports/fontations/src/bitmap.rs#L161-L178),
                 // the implementation of which has been tested against behavior in CoreText.
-                let glyf_bb = metrics.bounds(glyph_id).unwrap_or_default();
+                let has_glyf_contours = metrics.has_glyf_contours(glyph_id).unwrap_or(false);
                 let lsb = metrics.left_side_bearing(glyph_id).unwrap_or_default();
+                let y_min = if has_glyf_contours {
+                    metrics
+                        .bounds(glyph_id)
+                        .map(|bounds| bounds.y_min)
+                        .unwrap_or_default()
+                } else {
+                    0.0
+                };
                 let ppem = sbix.ppem() as f32;
                 let png_data = glyph.data();
                 // PNG format:
@@ -174,7 +182,7 @@ impl<'a> BitmapStrike<'a> {
                 Some(BitmapGlyph {
                     data: BitmapData::Png(glyph.data()),
                     bearing_x: lsb,
-                    bearing_y: glyf_bb.y_min,
+                    bearing_y: y_min,
                     inner_bearing_x: glyph.origin_offset_x() as f32,
                     inner_bearing_y: glyph.origin_offset_y() as f32,
                     ppem_x: ppem,
